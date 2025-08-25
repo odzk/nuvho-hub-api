@@ -1,0 +1,17 @@
+nuvho-hub-api/
+├── config/
+│   └── db.js
+├── controllers/
+│   └── authController.js
+├── middleware/
+│   └── auth.js
+├── models/
+│   └── User.js
+├── routes/
+│   └── auth.js
+├── utils/
+│   └── helpers.js
+├── .env
+├── .gitignore
+├── package.json
+└── server.js
