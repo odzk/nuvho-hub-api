@@ -1,4 +1,4 @@
-// services/webScraperService.js - Enhanced with detailed logging
+// services/webScraperService.js - PDF Generation with Playwright
 const { chromium } = require('playwright');
 const fs = require('fs-extra');
 const path = require('path');
@@ -7,7 +7,7 @@ class WebScraperService {
   constructor() {
     this.browser = null;
     this.reportsDir = path.join(__dirname, '../public/reports');
-    console.log('🔧 WebScraperService initialized');
+    console.log('🔧 Web scraper initialized for PDF generation');
     console.log('📁 Reports directory:', this.reportsDir);
   }
 
@@ -15,13 +15,11 @@ class WebScraperService {
     try {
       console.log('🚀 Starting browser initialization...');
       
-      // Ensure reports directory exists
       await this.ensureReportsDirectory();
       
-      // Launch browser with detailed logging
       console.log('🌐 Launching Chromium browser...');
       this.browser = await chromium.launch({
-        headless: true, // Set to false for debugging
+        headless: true,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -50,7 +48,6 @@ class WebScraperService {
       console.log('📁 Checking reports directory...');
       await fs.ensureDir(this.reportsDir);
       
-      // Test write permissions
       const testFile = path.join(this.reportsDir, 'test.txt');
       await fs.writeFile(testFile, 'test');
       await fs.remove(testFile);
@@ -114,7 +111,6 @@ class WebScraperService {
         results.failures.push({ source: 'looker', error: error.message });
       }
 
-      // Generate summary
       const summary = {
         timestamp: new Date().toISOString(),
         totalSources: 3,
@@ -131,7 +127,7 @@ class WebScraperService {
       return {
         reports,
         summary,
-        success: results.success.length > 0 // At least one successful scrape
+        success: results.success.length > 0
       };
 
     } catch (error) {
@@ -145,6 +141,7 @@ class WebScraperService {
 
   async scrapePowerBI() {
     const page = await this.browser.newPage();
+    
     try {
       console.log('🔗 Navigating to Power BI URL...');
       const url = 'https://app.powerbi.com/view?r=eyJrIjoiZTRmNGMyNDItMjE3ZC00NmEwLWFjYjctZTExNjUzNGRjZTFlIiwidCI6IjE1NzIzNDEzLWNiNWQtNDUzYy1iYjcyLTNmNDgxMjQxYWVmZiJ9';
@@ -155,30 +152,63 @@ class WebScraperService {
       });
       
       console.log('⏳ Waiting for Power BI content to load...');
+      // Wait longer for Power BI to fully render
+      await page.waitForTimeout(8000);
       
-      // Wait for Power BI to load
-      await page.waitForTimeout(5000);
+      // Set viewport for better capture
+      await page.setViewportSize({ width: 1920, height: 1080 });
       
-      // Look for data elements (adjust selectors based on actual Power BI structure)
-      const data = await page.evaluate(() => {
-        // This is a placeholder - you'll need to inspect the actual Power BI page
-        // to find the correct selectors for data extraction
-        const elements = document.querySelectorAll('[data-testid], .visual-content, .card-content');
-        return Array.from(elements).slice(0, 10).map(el => ({
-          text: el.textContent?.trim() || '',
-          className: el.className,
-          tag: el.tagName
-        })).filter(item => item.text.length > 0);
+      const timestamp = Date.now();
+      const baseFilename = `powerbi_report_${timestamp}`;
+      
+      // Generate PDF
+      console.log('📄 Generating PDF...');
+      const pdfFilename = `${baseFilename}.pdf`;
+      const pdfPath = path.join(this.reportsDir, pdfFilename);
+      
+      await page.pdf({
+        path: pdfPath,
+        format: 'A4',
+        landscape: true,
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        }
       });
-
-      const csvContent = this.convertToCSV(data, 'PowerBI');
-      const filename = `powerbi_report_${Date.now()}.csv`;
-      const filepath = path.join(this.reportsDir, filename);
       
-      await fs.writeFile(filepath, csvContent);
-      console.log(`💾 Power BI data saved to: ${filename}`);
+      const pdfStats = await fs.stat(pdfPath);
+      console.log(`💾 PDF saved: ${pdfFilename} (${(pdfStats.size / 1024).toFixed(1)} KB)`);
       
-      return { filename, filepath, rowCount: data.length };
+      // Also take a screenshot for preview
+      console.log('📸 Taking screenshot...');
+      const screenshotFilename = `${baseFilename}.png`;
+      const screenshotPath = path.join(this.reportsDir, screenshotFilename);
+      
+      await page.screenshot({
+        path: screenshotPath,
+        fullPage: true
+      });
+      
+      const screenshotStats = await fs.stat(screenshotPath);
+      console.log(`🖼️ Screenshot saved: ${screenshotFilename} (${(screenshotStats.size / 1024).toFixed(1)} KB)`);
+      
+      return {
+        pdf: {
+          filename: pdfFilename,
+          filepath: pdfPath,
+          size: pdfStats.size
+        },
+        screenshot: {
+          filename: screenshotFilename,
+          filepath: screenshotPath,
+          size: screenshotStats.size
+        },
+        source: url,
+        timestamp: new Date().toISOString()
+      };
       
     } catch (error) {
       console.error('❌ Power BI scraping error:', error.message);
@@ -190,6 +220,7 @@ class WebScraperService {
 
   async scrapePipedrive() {
     const page = await this.browser.newPage();
+    
     try {
       console.log('🔗 Navigating to Pipedrive URL...');
       const url = 'https://nuvho.pipedrive.com/share/be72785687bfe28b9be176c6f679e6ddd0c5352c7af5cf690b6a4dc6a0e43c51';
@@ -200,29 +231,61 @@ class WebScraperService {
       });
       
       console.log('⏳ Waiting for Pipedrive content to load...');
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(5000);
       
-      // Extract Pipedrive data
-      const data = await page.evaluate(() => {
-        // Adjust selectors based on Pipedrive's actual structure
-        const rows = document.querySelectorAll('tr, .deal-row, .pipeline-item, .report-row');
-        return Array.from(rows).slice(0, 20).map((row, index) => ({
-          rowIndex: index,
-          text: row.textContent?.trim() || '',
-          cells: Array.from(row.querySelectorAll('td, .cell, .value')).map(cell => 
-            cell.textContent?.trim() || ''
-          )
-        })).filter(item => item.text.length > 0);
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      
+      const timestamp = Date.now();
+      const baseFilename = `pipedrive_report_${timestamp}`;
+      
+      // Generate PDF
+      console.log('📄 Generating PDF...');
+      const pdfFilename = `${baseFilename}.pdf`;
+      const pdfPath = path.join(this.reportsDir, pdfFilename);
+      
+      await page.pdf({
+        path: pdfPath,
+        format: 'A4',
+        landscape: true,
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        }
       });
-
-      const csvContent = this.convertToCSV(data, 'Pipedrive');
-      const filename = `pipedrive_report_${Date.now()}.csv`;
-      const filepath = path.join(this.reportsDir, filename);
       
-      await fs.writeFile(filepath, csvContent);
-      console.log(`💾 Pipedrive data saved to: ${filename}`);
+      const pdfStats = await fs.stat(pdfPath);
+      console.log(`💾 PDF saved: ${pdfFilename} (${(pdfStats.size / 1024).toFixed(1)} KB)`);
       
-      return { filename, filepath, rowCount: data.length };
+      // Screenshot
+      console.log('📸 Taking screenshot...');
+      const screenshotFilename = `${baseFilename}.png`;
+      const screenshotPath = path.join(this.reportsDir, screenshotFilename);
+      
+      await page.screenshot({
+        path: screenshotPath,
+        fullPage: true
+      });
+      
+      const screenshotStats = await fs.stat(screenshotPath);
+      console.log(`🖼️ Screenshot saved: ${screenshotFilename}`);
+      
+      return {
+        pdf: {
+          filename: pdfFilename,
+          filepath: pdfPath,
+          size: pdfStats.size
+        },
+        screenshot: {
+          filename: screenshotFilename,
+          filepath: screenshotPath,
+          size: screenshotStats.size
+        },
+        source: url,
+        timestamp: new Date().toISOString()
+      };
       
     } catch (error) {
       console.error('❌ Pipedrive scraping error:', error.message);
@@ -234,6 +297,7 @@ class WebScraperService {
 
   async scrapeLookerStudio() {
     const page = await this.browser.newPage();
+    
     try {
       console.log('🔗 Navigating to Looker Studio URL...');
       const url = 'https://lookerstudio.google.com/embed/reporting/79629ba9-1330-4b0e-aff9-720777237d92/page/p_kvluly5zoc';
@@ -244,37 +308,62 @@ class WebScraperService {
       });
       
       console.log('⏳ Waiting for Looker Studio content to load...');
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(8000);
       
-      // Extract Looker Studio data
-      const data = await page.evaluate(() => {
-        // Adjust selectors based on Looker Studio's structure
-        const charts = document.querySelectorAll('[data-chart], .chart-container, .visualization');
-        const tables = document.querySelectorAll('table, .data-table, .report-table');
-        
-        const chartData = Array.from(charts).map((chart, index) => ({
-          type: 'chart',
-          index,
-          content: chart.textContent?.trim() || ''
-        }));
-        
-        const tableData = Array.from(tables).map((table, index) => ({
-          type: 'table',
-          index,
-          content: table.textContent?.trim() || ''
-        }));
-        
-        return [...chartData, ...tableData].filter(item => item.content.length > 0);
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      
+      const timestamp = Date.now();
+      const baseFilename = `looker_studio_report_${timestamp}`;
+      
+      // Generate PDF
+      console.log('📄 Generating PDF...');
+      const pdfFilename = `${baseFilename}.pdf`;
+      const pdfPath = path.join(this.reportsDir, pdfFilename);
+      
+      await page.pdf({
+        path: pdfPath,
+        format: 'A4',
+        landscape: true,
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        },
+        scale: 0.9 // Slightly smaller scale for better fit
       });
-
-      const csvContent = this.convertToCSV(data, 'LookerStudio');
-      const filename = `looker_studio_report_${Date.now()}.csv`;
-      const filepath = path.join(this.reportsDir, filename);
       
-      await fs.writeFile(filepath, csvContent);
-      console.log(`💾 Looker Studio data saved to: ${filename}`);
+      const pdfStats = await fs.stat(pdfPath);
+      console.log(`💾 PDF saved: ${pdfFilename} (${(pdfStats.size / 1024).toFixed(1)} KB)`);
       
-      return { filename, filepath, rowCount: data.length };
+      // Screenshot
+      console.log('📸 Taking screenshot...');
+      const screenshotFilename = `${baseFilename}.png`;
+      const screenshotPath = path.join(this.reportsDir, screenshotFilename);
+      
+      await page.screenshot({
+        path: screenshotPath,
+        fullPage: true
+      });
+      
+      const screenshotStats = await fs.stat(screenshotPath);
+      console.log(`🖼️ Screenshot saved: ${screenshotFilename}`);
+      
+      return {
+        pdf: {
+          filename: pdfFilename,
+          filepath: pdfPath,
+          size: pdfStats.size
+        },
+        screenshot: {
+          filename: screenshotFilename,
+          filepath: screenshotPath,
+          size: screenshotStats.size
+        },
+        source: url,
+        timestamp: new Date().toISOString()
+      };
       
     } catch (error) {
       console.error('❌ Looker Studio scraping error:', error.message);
@@ -282,26 +371,6 @@ class WebScraperService {
     } finally {
       await page.close();
     }
-  }
-
-  convertToCSV(data, source) {
-    if (!data || data.length === 0) {
-      return `Source,Message\n${source},"No data found"`;
-    }
-
-    const headers = ['Source', 'Index', 'Content', 'Type', 'Timestamp'];
-    const timestamp = new Date().toISOString();
-    
-    const rows = data.map((item, index) => {
-      const content = (typeof item === 'object' ? 
-        (item.text || item.content || JSON.stringify(item)) : 
-        String(item)
-      ).replace(/"/g, '""'); // Escape quotes for CSV
-      
-      return `"${source}","${index}","${content}","${typeof item}","${timestamp}"`;
-    });
-
-    return [headers.join(','), ...rows].join('\n');
   }
 
   async cleanup() {

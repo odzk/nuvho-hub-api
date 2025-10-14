@@ -1,14 +1,12 @@
-// controllers/scrapingController.js - Complete implementation matching frontend API
+// controllers/scrapingController.js - PDF Generation Controller
 const WebScraperService = require('../services/webScraperService');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs-extra');
 const path = require('path');
 
-// Helper function to get reports directory
 const getReportsDir = () => path.join(__dirname, '../public/reports');
 
-// Environment check function
 async function performEnvironmentCheck() {
   console.log('🔧 Checking environment...');
   
@@ -21,7 +19,6 @@ async function performEnvironmentCheck() {
     playwrightInstalled: false
   };
   
-  // Check if Playwright is installed
   try {
     require('playwright');
     checks.playwrightInstalled = true;
@@ -29,16 +26,12 @@ async function performEnvironmentCheck() {
     checks.playwrightInstalled = false;
   }
   
-  console.log('Environment checks:', JSON.stringify(checks, null, 2));
-  
-  // Ensure reports directory exists
   await fs.ensureDir(checks.reportsDir);
   console.log('✅ Environment check completed');
   
   return checks;
 }
 
-// Process scraping results
 async function processScrapingResults(scrapingResult) {
   console.log('⚙️ Processing scraping results...');
   
@@ -65,11 +58,10 @@ async function processScrapingResults(scrapingResult) {
     });
   }
   
-  console.log(`✅ Processed ${files.length} files`);
+  console.log(`✅ Processed ${files.length} PDF reports`);
   return { files };
 }
 
-// Upload to OpenAI function
 async function uploadToOpenAI(files) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OpenAI API key not configured');
@@ -80,10 +72,11 @@ async function uploadToOpenAI(files) {
   
   for (const file of files) {
     try {
-      console.log(`📤 Uploading ${file.source} file: ${file.filename}`);
+      console.log(`📤 Uploading ${file.source}: ${file.pdf.filename}`);
       
+      // Upload PDF directly to OpenAI
       const formData = new FormData();
-      formData.append('file', fs.createReadStream(file.filepath));
+      formData.append('file', fs.createReadStream(file.pdf.filepath));
       formData.append('purpose', 'assistants');
       
       const response = await axios.post('https://api.openai.com/v1/files', formData, {
@@ -91,23 +84,24 @@ async function uploadToOpenAI(files) {
           'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
           ...formData.getHeaders()
         },
-        timeout: 30000
+        timeout: 60000
       });
       
       uploadResults.push({
         source: file.source,
-        filename: file.filename,
+        filename: file.pdf.filename,
         openai_file_id: response.data.id,
-        status: 'success'
+        status: 'success',
+        fileType: 'PDF'
       });
       
-      console.log(`✅ Successfully uploaded ${file.source} to OpenAI`);
+      console.log(`✅ Successfully uploaded ${file.source} PDF to OpenAI`);
       
     } catch (error) {
       console.error(`❌ Failed to upload ${file.source}:`, error.message);
       uploadResults.push({
         source: file.source,
-        filename: file.filename,
+        filename: file.pdf.filename,
         status: 'failed',
         error: error.message
       });
@@ -122,18 +116,16 @@ async function uploadToOpenAI(files) {
   };
 }
 
-// 1. Main scraping endpoint (matches frontend: /scrape-urls)
+// Main scraping endpoint
 async function scrapeUrls(req, res) {
-  console.log('\n🚀 === SCRAPING REQUEST STARTED ===');
+  console.log('\n🚀 === PDF SCRAPING REQUEST STARTED ===');
   console.log('📅 Timestamp:', new Date().toISOString());
   console.log('🔐 User:', req.user?.uid || 'Unknown');
-  console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
   
   const scraperService = new WebScraperService();
   let scrapingResult = null;
   
   try {
-    // Extract URLs from request body (frontend format)
     const { urls, uploadToAI } = req.body;
     
     if (!urls || typeof urls !== 'object') {
@@ -143,28 +135,22 @@ async function scrapeUrls(req, res) {
       });
     }
 
-    // Step 1: Environment Check
     console.log('\n🔧 Step 1: Environment Check');
     const envCheck = await performEnvironmentCheck();
     
-    // Step 2: Initialize Scraper
     console.log('\n🌐 Step 2: Initialize Web Scraper');
     const initSuccess = await scraperService.initialize();
     if (!initSuccess) {
       throw new Error('Scraper initialization failed');
     }
-    console.log('✅ Scraper initialized successfully');
     
-    // Step 3: Perform Scraping
-    console.log('\n📊 Step 3: Perform Web Scraping');
+    console.log('\n📊 Step 3: Perform Web Scraping to PDF');
     scrapingResult = await scraperService.scrapeAllReports();
-    console.log('✅ Scraping completed');
+    console.log('✅ PDF scraping completed');
     
-    // Step 4: Process Results
     console.log('\n⚙️ Step 4: Process Scraping Results');
     const processedResult = await processScrapingResults(scrapingResult);
     
-    // Step 5: Upload to OpenAI (if requested)
     console.log('\n🤖 Step 5: Upload to OpenAI Assistant');
     let openAIResult = null;
     
@@ -178,30 +164,36 @@ async function scrapeUrls(req, res) {
       }
     }
     
-    // Format response to match frontend expectations
     const response = {
       success: true,
-      message: 'Scraping completed successfully',
+      message: 'PDF scraping completed successfully',
       data: {
         summary: {
           successful: scrapingResult.summary.successCount,
           totalProcessed: scrapingResult.summary.totalSources,
-          csvFilesGenerated: processedResult.files.length,
+          pdfFilesGenerated: processedResult.files.length,
+          screenshotsGenerated: processedResult.files.length,
           filesUploadedToAI: openAIResult ? openAIResult.successfulUploads : 0
         },
         results: processedResult.files.map(file => ({
           reportType: file.source,
-          recordCount: file.rowCount || 0,
           success: true,
           scraped: {
             source: file.source,
-            extractedAt: new Date().toISOString(),
-            usingSampleData: false
+            extractedAt: file.timestamp,
+            format: 'PDF + Screenshot'
           },
-          csvFile: {
+          pdfFile: {
             success: true,
-            filename: file.filename,
-            size: fs.statSync(file.filepath).size
+            filename: file.pdf.filename,
+            size: file.pdf.size,
+            format: 'PDF'
+          },
+          screenshot: {
+            success: true,
+            filename: file.screenshot.filename,
+            size: file.screenshot.size,
+            format: 'PNG'
           },
           openaiUpload: openAIResult ? {
             success: openAIResult.results.find(r => r.source === file.source)?.status === 'success',
@@ -215,29 +207,23 @@ async function scrapeUrls(req, res) {
     res.status(200).json(response);
     
   } catch (error) {
-    console.error('\n❌ === SCRAPING ERROR ===');
-    console.error('🚨 Error Type:', error.constructor.name);
-    console.error('📝 Error Message:', error.message);
-    console.error('📚 Error Stack:', error.stack);
+    console.error('\n❌ === PDF SCRAPING ERROR ===');
+    console.error('Error:', error.message);
     
-    const errorResponse = {
+    res.status(500).json({
       success: false,
-      message: `Internal server error during scraping: ${error.message}`,
+      message: `Internal server error during PDF scraping: ${error.message}`,
       error: {
         message: error.message,
         type: error.constructor.name,
         timestamp: new Date().toISOString()
       }
-    };
-    
-    console.log('💥 Sending error response:', JSON.stringify(errorResponse, null, 2));
-    res.status(500).json(errorResponse);
+    });
     
   } finally {
     try {
       if (scraperService) {
         await scraperService.cleanup();
-        console.log('🧹 Cleanup completed');
       }
     } catch (cleanupError) {
       console.error('⚠️ Cleanup error:', cleanupError.message);
@@ -245,7 +231,7 @@ async function scrapeUrls(req, res) {
   }
 }
 
-// 2. Test URL endpoint (matches frontend: /test-url)
+// Test URL endpoint
 async function testUrl(req, res) {
   console.log('\n🧪 === URL TEST STARTED ===');
   
@@ -263,30 +249,29 @@ async function testUrl(req, res) {
   try {
     await scraperService.initialize();
     
-    // Simple test - just try to navigate to the URL
     const browser = scraperService.browser;
     const page = await browser.newPage();
     
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     const title = await page.title();
+    await page.waitForTimeout(3000);
     
     await page.close();
     await scraperService.cleanup();
     
     res.json({
       success: true,
-      message: `Successfully accessed ${reportType} URL`,
-      recordCount: 1,
+      message: `Successfully accessed ${reportType} URL - Ready for PDF generation`,
       data: {
         title,
-        usingSampleData: false,
-        url
+        url,
+        format: 'PDF + Screenshot',
+        readyForCapture: true
       }
     });
     
   } catch (error) {
     console.error('❌ URL test failed:', error.message);
-    
     await scraperService.cleanup();
     
     res.json({
@@ -296,7 +281,7 @@ async function testUrl(req, res) {
   }
 }
 
-// 3. Get system status (matches frontend: /status)
+// Get system status
 async function getStatus(req, res) {
   try {
     const envCheck = await performEnvironmentCheck();
@@ -304,9 +289,12 @@ async function getStatus(req, res) {
     res.json({
       success: true,
       timestamp: new Date().toISOString(),
+      outputFormat: 'PDF + Screenshot',
       scraper: {
         playwrightInstalled: envCheck.playwrightInstalled,
-        openaiConfigured: envCheck.openaiConfigured
+        openaiConfigured: envCheck.openaiConfigured,
+        outputFormat: 'PDF documents with PNG screenshots',
+        pdfSupport: true
       },
       environment: envCheck
     });
@@ -318,40 +306,49 @@ async function getStatus(req, res) {
   }
 }
 
-// 4. Get generated files (matches frontend: /files)
+// Get generated files
 async function getFiles(req, res) {
   try {
     const reportsDir = getReportsDir();
     await fs.ensureDir(reportsDir);
     
     const files = await fs.readdir(reportsDir);
-    const csvFiles = files.filter(file => file.endsWith('.csv'));
+    const pdfFiles = files.filter(file => file.endsWith('.pdf'));
+    const screenshotFiles = files.filter(file => file.endsWith('.png'));
     
     const fileDetails = await Promise.all(
-      csvFiles.map(async (filename) => {
+      pdfFiles.map(async (filename) => {
         const filepath = path.join(reportsDir, filename);
         const stats = await fs.stat(filepath);
+        
+        // Find matching screenshot
+        const screenshotName = filename.replace('.pdf', '.png');
+        const hasScreenshot = screenshotFiles.includes(screenshotName);
         
         return {
           filename,
           size: stats.size,
           created: stats.birthtime,
-          modified: stats.mtime
+          modified: stats.mtime,
+          format: 'PDF',
+          type: 'report',
+          screenshot: hasScreenshot ? screenshotName : null
         };
       })
     );
     
-    // Sort by creation date, newest first
     fileDetails.sort((a, b) => b.created - a.created);
     
     res.json({
       success: true,
       files: fileDetails,
-      count: fileDetails.length
+      count: fileDetails.length,
+      format: 'PDF',
+      totalScreenshots: screenshotFiles.length
     });
     
   } catch (error) {
-    console.error('❌ Failed to get files:', error.message);
+    console.error('❌ Failed to get PDF files:', error.message);
     res.status(500).json({
       success: false,
       error: error.message
@@ -359,7 +356,7 @@ async function getFiles(req, res) {
   }
 }
 
-// 5. Upload file to OpenAI (matches frontend: /upload-to-openai)
+// Upload file to OpenAI
 async function uploadFileToOpenAI(req, res) {
   try {
     const { filename } = req.body;
@@ -383,7 +380,7 @@ async function uploadFileToOpenAI(req, res) {
     if (!await fs.pathExists(filepath)) {
       return res.status(404).json({
         success: false,
-        error: 'File not found'
+        error: 'PDF file not found'
       });
     }
     
@@ -396,7 +393,7 @@ async function uploadFileToOpenAI(req, res) {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
         ...formData.getHeaders()
       },
-      timeout: 30000
+      timeout: 60000
     });
     
     res.json({
@@ -406,7 +403,8 @@ async function uploadFileToOpenAI(req, res) {
         fileId: response.data.id,
         filename: response.data.filename,
         bytes: response.data.bytes,
-        purpose: response.data.purpose
+        purpose: response.data.purpose,
+        format: 'PDF'
       }
     });
     
@@ -419,7 +417,7 @@ async function uploadFileToOpenAI(req, res) {
   }
 }
 
-// 6. Download file endpoint
+// Download file endpoint
 async function downloadFile(req, res) {
   try {
     const { filename } = req.params;
@@ -430,6 +428,13 @@ async function downloadFile(req, res) {
         success: false,
         error: 'File not found'
       });
+    }
+    
+    // Set proper content type
+    if (filename.endsWith('.pdf')) {
+      res.setHeader('Content-Type', 'application/pdf');
+    } else if (filename.endsWith('.png')) {
+      res.setHeader('Content-Type', 'image/png');
     }
     
     res.download(filepath, filename);
@@ -443,11 +448,12 @@ async function downloadFile(req, res) {
   }
 }
 
-// 7. Health check endpoint
+// Health check endpoint
 async function healthCheck(req, res) {
   res.json({
     status: 'healthy',
-    service: 'web-scraping',
+    service: 'web-scraping-pdf',
+    outputFormat: 'PDF + Screenshot',
     timestamp: new Date().toISOString(),
     environment: {
       nodeVersion: process.version,
@@ -458,11 +464,11 @@ async function healthCheck(req, res) {
 }
 
 module.exports = {
-  scrapeUrls,         // POST /scrape-urls
-  testUrl,           // POST /test-url  
-  getStatus,         // GET /status
-  getFiles,          // GET /files
-  uploadFileToOpenAI, // POST /upload-to-openai
-  downloadFile,      // GET /download/:filename
-  healthCheck        // GET /health
+  scrapeUrls,
+  testUrl,
+  getStatus,
+  getFiles,
+  uploadFileToOpenAI,
+  downloadFile,
+  healthCheck
 };
