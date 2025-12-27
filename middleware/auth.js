@@ -2,7 +2,8 @@
 const jwt = require('jsonwebtoken');
 const { verifyFirebaseToken } = require('../config/firebase');
 
-module.exports = async (req, res, next) => {
+// Main auth middleware (existing Firebase + JWT logic)
+const verifyToken = async (req, res, next) => {
   try {
     // Get token from header
     const authHeader = req.headers.authorization;
@@ -69,3 +70,77 @@ module.exports = async (req, res, next) => {
     res.status(401).json({ message: 'Authorization failed' });
   }
 };
+
+// Optional auth middleware (allows both authenticated and anonymous access)
+const optionalAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    // Try Firebase token verification first
+    const decodedFirebaseToken = await verifyFirebaseToken(token);
+    req.user = {
+      id: decodedFirebaseToken.uid,
+      email: decodedFirebaseToken.email,
+      role: decodedFirebaseToken.role || 'hoteladmin',
+      firebaseUser: true
+    };
+  } catch (firebaseError) {
+    try {
+      // Fallback to JWT verification
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded;
+    } catch (jwtError) {
+      req.user = null;
+    }
+  }
+  
+  next();
+};
+
+// Role-based access control
+const requireRole = (roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+        error: 'No user context'
+      });
+    }
+
+    const userRole = req.user.role || 'hoteluser';
+    const allowedRoles = Array.isArray(roles) ? roles : [roles];
+    
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions',
+        error: `Role ${userRole} not authorized. Required: ${allowedRoles.join(', ')}`
+      });
+    }
+
+    next();
+  };
+};
+
+// Admin only access
+const requireAdmin = requireRole(['superadmin', 'superuser', 'groupadmin']);
+
+// Hotel admin or higher access
+const requireHotelAdmin = requireRole(['superadmin', 'superuser', 'groupadmin', 'regionaladmin', 'hoteladmin']);
+
+// Export main middleware as default for backward compatibility
+module.exports = verifyToken;
+
+// Also export named exports for AI search routes
+module.exports.verifyToken = verifyToken;
+module.exports.optionalAuth = optionalAuth;
+module.exports.requireRole = requireRole;
+module.exports.requireAdmin = requireAdmin;
+module.exports.requireHotelAdmin = requireHotelAdmin;
