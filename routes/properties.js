@@ -2,8 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const propertyController = require('../controllers/propertyController');
-// Use ultra-simple auth for MySQL testing
-const auth = require('../middleware/auth-mysql-test');
+// Use simple auth middleware for testing
+const auth = require('../middleware/auth');
 
 // All routes require authentication
 router.use(auth);

@@ -13,11 +13,17 @@ const { testConnection, initializeDatabase, closePool } = require('./config/data
 // Conditionally initialize Firebase
 let firebaseEnabled = false;
 try {
+  // Only try to load Firebase if the package exists
+  require.resolve('firebase-admin');
   const { initializeFirebase } = require('./config/firebase');
   initializeFirebase();
   firebaseEnabled = true;
 } catch (error) {
-  console.log('⚠️ Firebase not available:', error.message);
+  if (error.code === 'MODULE_NOT_FOUND') {
+    console.log('ℹ️ Firebase Admin not installed - using simple authentication');
+  } else {
+    console.log('⚠️ Firebase not available:', error.message);
+  }
   console.log('📝 Using simple authentication for development');
 }
 
@@ -32,6 +38,15 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Routes - choose auth system based on Firebase availability
 app.use('/api/auth', require('./routes/auth'));
+
+// Only load HubSpot routes if the file exists
+try {
+  app.use('/api/hubspot', require('./routes/hubspot'));
+  console.log('✅ HubSpot routes loaded');
+} catch (error) {
+  console.log('ℹ️ HubSpot routes not available - run setup to enable HubSpot integration');
+}
+
 if (firebaseEnabled) {
   console.log('🔥 Using Firebase authentication');
   app.use('/api/properties', require('./routes/properties'));
@@ -62,7 +77,10 @@ app.get('/api/test', (req, res) => {
       'GET /api/test', 
       'POST /api/auth/register',
       'POST /api/auth/login',
-      'POST /api/properties (requires auth)'
+      'POST /api/properties (requires auth)',
+      'GET /api/hubspot/status',
+      'GET /api/hubspot/test-connection',
+      'POST /api/hubspot/test-hotel'
     ]
   });
 });
@@ -130,6 +148,9 @@ const startServer = async () => {
       console.log('   - PUT  /api/properties/:id');
       console.log('   - PATCH /api/properties/:id/status');
       console.log('   - DELETE /api/properties/:id');
+      console.log('   - GET  /api/hubspot/status');
+      console.log('   - GET  /api/hubspot/test-connection');
+      console.log('   - POST /api/hubspot/test-hotel');
       console.log('   - GET  /api/health');
       console.log('   - GET  /api/test');
       
