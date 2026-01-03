@@ -20,11 +20,11 @@ try {
   firebaseEnabled = true;
 } catch (error) {
   if (error.code === 'MODULE_NOT_FOUND') {
-    console.log('ℹ️ Firebase Admin not installed - using simple authentication');
+    console.log('ℹ️ Firebase Admin not installed - using MySQL-first authentication');
   } else {
     console.log('⚠️ Firebase not available:', error.message);
   }
-  console.log('📝 Using simple authentication for development');
+  console.log('🔧 Using MySQL-first authentication for development');
 }
 
 // Initialize express app
@@ -36,7 +36,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Routes - choose auth system based on Firebase availability
+// Enhanced auth routes with MySQL-first support
 app.use('/api/auth', require('./routes/auth'));
 
 // Only load HubSpot routes if the file exists
@@ -47,43 +47,154 @@ try {
   console.log('ℹ️ HubSpot routes not available - run setup to enable HubSpot integration');
 }
 
+// Property routes with Firebase/MySQL compatibility
 if (firebaseEnabled) {
-  console.log('🔥 Using Firebase authentication');
+  console.log('🔥 Using Firebase + MySQL hybrid authentication');
   app.use('/api/properties', require('./routes/properties'));
 } else {
-  console.log('🔧 Using simple authentication (development)');
+  console.log('🔧 Using MySQL-first authentication (development)');
   app.use('/api/properties', require('./routes/properties-simple'));
 }
 
-// Health check route
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    database: 'Connected',
-    firebase: firebaseEnabled ? 'Available' : 'Not Available',
-    authSystem: firebaseEnabled ? 'Firebase' : 'Simple'
-  });
+// Health check route with enhanced auth system info
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    await testConnection();
+    
+    res.json({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      database: 'Connected',
+      firebase: firebaseEnabled ? 'Available' : 'Not Available',
+      authSystem: firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only',
+      features: {
+        mysqlFirst: true,
+        firebaseBackup: firebaseEnabled,
+        orphanedUserCleanup: true,
+        hybridAuthentication: firebaseEnabled
+      }
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'ERROR', 
+      timestamp: new Date().toISOString(),
+      database: 'Connection Failed',
+      firebase: firebaseEnabled ? 'Available' : 'Not Available',
+      authSystem: 'Unavailable',
+      error: error.message
+    });
+  }
 });
 
-// Test endpoint (no auth required)
+// Enhanced test endpoint with auth flow information
 app.get('/api/test', (req, res) => {
   res.json({
-    message: 'Backend server is running!',
+    message: 'Nuvho HotelCRM Backend Server is running!',
     timestamp: new Date().toISOString(),
-    authSystem: firebaseEnabled ? 'Firebase Authentication' : 'Simple Authentication (Development)',
+    authSystem: firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only Authentication',
+    version: '2.0.0',
+    features: {
+      mysqlFirstRegistration: true,
+      firebaseBackup: firebaseEnabled,
+      orphanedUserCleanup: true,
+      dualDatabaseSupport: true,
+      hybridAuthentication: firebaseEnabled
+    },
     endpoints: [
       'GET /api/health',
       'GET /api/test', 
-      'POST /api/auth/register',
+      
+      // Enhanced Auth Endpoints
+      'POST /api/auth/register (MySQL-first registration)',
+      'POST /api/auth/register-firebase (Firebase-initiated users)',
       'POST /api/auth/login',
+      'POST /api/auth/forgot-password',
+      'GET /api/auth/me',
+      'DELETE /api/auth/cleanup-orphaned (utility)',
+      
+      // Property Endpoints
       'POST /api/properties (requires auth)',
+      'GET /api/properties/my-properties',
+      'GET /api/properties/:id',
+      'PUT /api/properties/:id',
+      'PATCH /api/properties/:id/status',
+      'DELETE /api/properties/:id',
+      
+      // HubSpot Integration (if available)
       'GET /api/hubspot/status',
       'GET /api/hubspot/test-connection',
       'POST /api/hubspot/test-hotel'
+    ],
+    registrationFlow: firebaseEnabled ? [
+      '1. Save user to MySQL database',
+      '2. Create Firebase authentication account',
+      '3. Update MySQL user with Firebase UID',
+      '4. Return success with token'
+    ] : [
+      '1. Save user to MySQL database',
+      '2. Return success with token',
+      'Note: Firebase backup not available'
     ]
   });
 });
+
+// Utility endpoint to cleanup orphaned users
+app.delete('/api/auth/cleanup-orphaned', async (req, res) => {
+  try {
+    const authController = require('./controllers/authController');
+    await authController.cleanupOrphanedUsers(req, res);
+  } catch (error) {
+    console.error('Cleanup endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Cleanup endpoint not available'
+    });
+  }
+});
+
+// Debug endpoint for registration flow testing (development only)
+if (process.env.NODE_ENV === 'development') {
+  app.post('/api/debug/test-registration', async (req, res) => {
+    try {
+      const { email = 'test@nuvho.com', skipFirebase = false } = req.body;
+      
+      const testData = {
+        email,
+        password: 'testpassword123',
+        firstName: 'Test',
+        lastName: 'User',
+        displayName: 'Test User',
+        hotelName: 'Test Hotel',
+        role: 'hoteluser',
+        skipFirebase
+      };
+      
+      // Test the registration flow
+      const authController = require('./controllers/authController');
+      const mockReq = { body: testData };
+      const mockRes = {
+        status: (code) => mockRes,
+        json: (data) => {
+          res.json({
+            message: 'Registration flow test completed',
+            testData,
+            result: data,
+            flow: firebaseEnabled && !skipFirebase ? 'mysql-firebase-test' : 'mysql-only-test'
+          });
+          return mockRes;
+        }
+      };
+      
+      await authController.register(mockReq, mockRes);
+    } catch (error) {
+      res.status(500).json({
+        message: 'Registration test failed',
+        error: error.message
+      });
+    }
+  });
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -113,6 +224,22 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // Firebase errors
+  if (err.code && err.code.startsWith('auth/')) {
+    return res.status(400).json({
+      message: 'Firebase authentication error',
+      error: err.message
+    });
+  }
+  
+  // MySQL errors
+  if (err.code === 'ER_DUP_ENTRY') {
+    return res.status(409).json({
+      message: 'Duplicate entry',
+      error: 'Resource already exists'
+    });
+  }
+  
   // Default error response
   res.status(500).json({ 
     message: 'Something went wrong!',
@@ -123,7 +250,8 @@ app.use((err, req, res, next) => {
 // Initialize database and start server
 const startServer = async () => {
   try {
-    console.log('🚀 Starting Nuvho HotelCRM Server...');
+    console.log('🚀 Starting Nuvho HotelCRM Server v2.0...');
+    console.log('💾 Authentication Flow: MySQL-First + Firebase Backup');
     
     // Test database connection
     await testConnection();
@@ -134,37 +262,71 @@ const startServer = async () => {
     // Start the server
     const server = app.listen(PORT, () => {
       console.log(`🎉 Server running successfully on port ${PORT}`);
-      console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`📡 API Base URL: http://localhost:${PORT}/api`);
-      console.log(`🔐 Auth System: ${firebaseEnabled ? 'Firebase Authentication' : 'Simple Authentication (Development)'}`);
-      console.log('📋 Available endpoints:');
-      console.log('   - POST /api/auth/register');
-      console.log('   - POST /api/auth/login');
-      console.log('   - POST /api/auth/forgot-password');
-      console.log('   - GET  /api/auth/me');
-      console.log('   - POST /api/properties');
-      console.log('   - GET  /api/properties/my-properties');
-      console.log('   - GET  /api/properties/:id');
-      console.log('   - PUT  /api/properties/:id');
-      console.log('   - PATCH /api/properties/:id/status');
-      console.log('   - DELETE /api/properties/:id');
-      console.log('   - GET  /api/hubspot/status');
-      console.log('   - GET  /api/hubspot/test-connection');
-      console.log('   - POST /api/hubspot/test-hotel');
-      console.log('   - GET  /api/health');
-      console.log('   - GET  /api/test');
+      console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
+      console.log(`🔐 Auth System: ${firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only Authentication'}`);
+      
+      console.log('\n📋 Registration Flow:');
+      if (firebaseEnabled) {
+        console.log('   1. ✅ Save user to MySQL database');
+        console.log('   2. 🔥 Create Firebase authentication account');
+        console.log('   3. 🔄 Update MySQL user with Firebase UID');
+        console.log('   4. 🎯 Return success with JWT token');
+        console.log('   📝 Fallback: Continue with MySQL-only if Firebase fails');
+      } else {
+        console.log('   1. ✅ Save user to MySQL database');
+        console.log('   2. 🎯 Return success with JWT token');
+        console.log('   📝 Note: Firebase backup not available');
+      }
+      
+      console.log('\n📡 Available endpoints:');
+      console.log('   🔐 Authentication:');
+      console.log('     - POST /api/auth/register (MySQL-first registration)');
+      console.log('     - POST /api/auth/register-firebase (Firebase-initiated users)');
+      console.log('     - POST /api/auth/login');
+      console.log('     - POST /api/auth/forgot-password');
+      console.log('     - GET  /api/auth/me');
+      
+      console.log('   🏨 Properties:');
+      console.log('     - POST /api/properties');
+      console.log('     - GET  /api/properties/my-properties');
+      console.log('     - GET  /api/properties/:id');
+      console.log('     - PUT  /api/properties/:id');
+      console.log('     - PATCH /api/properties/:id/status');
+      console.log('     - DELETE /api/properties/:id');
+      
+      console.log('   🔧 Utilities:');
+      console.log('     - GET  /api/health');
+      console.log('     - GET  /api/test');
+      console.log('     - DELETE /api/auth/cleanup-orphaned');
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('   🧪 Development:');
+        console.log('     - POST /api/debug/test-registration');
+      }
+      
+      console.log('   📊 HubSpot (if available):');
+      console.log('     - GET  /api/hubspot/status');
+      console.log('     - GET  /api/hubspot/test-connection');
+      console.log('     - POST /api/hubspot/test-hotel');
       
       if (!firebaseEnabled) {
         console.log('');
-        console.log('⚠️  DEVELOPMENT MODE: Simple authentication active');
-        console.log('💡 Any Bearer token will work in development');
-        console.log('🔧 To enable Firebase: ensure service account JSON is available');
+        console.log('⚠️  DEVELOPMENT MODE: MySQL-first authentication active');
+        console.log('🔧 Firebase backup not available - user creation uses MySQL only');
+        console.log('💡 Install firebase-admin to enable hybrid authentication');
+      } else {
+        console.log('');
+        console.log('✅ PRODUCTION READY: Hybrid authentication system active');
+        console.log('💾 Primary: MySQL database for user storage');
+        console.log('🔥 Backup: Firebase authentication for auth services');
+        console.log('🔄 Automatic: Orphaned user cleanup available');
       }
     });
     
     // Graceful shutdown handling
     const gracefulShutdown = async (signal) => {
-      console.log(`\n📡 ${signal} received. Starting graceful shutdown...`);
+      console.log(`\n🔔 ${signal} received. Starting graceful shutdown...`);
       
       server.close(async () => {
         console.log('🔒 HTTP server closed');
@@ -193,7 +355,7 @@ const startServer = async () => {
     
   } catch (error) {
     console.error('❌ Failed to start server:', error);
-    console.error('💡 Please check your database connection and try again');
+    console.error('💡 Please check your database connection and configuration');
     process.exit(1);
   }
 };
