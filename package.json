@@ -1,7 +1,7 @@
 {
   "name": "nuvho-hotelcrm-backend",
-  "version": "1.0.0",
-  "description": "Backend API for Nuvho HotelCRM system with MySQL database integration",
+  "version": "1.1.0",
+  "description": "Backend API for Nuvho HotelCRM system with MySQL database integration and AI services",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -18,7 +18,9 @@
     "api",
     "mysql",
     "nodejs",
-    "express"
+    "express",
+    "ai",
+    "openai"
   ],
   "author": "Nuvho Development Team",
   "license": "MIT",
@@ -30,11 +32,14 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "firebase-admin": "^13.6.0",
+    "form-data": "^4.0.0",
     "helmet": "^7.1.0",
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.2",
     "moment": "^2.29.4",
+    "multer": "^1.4.5-lts.1",
     "mysql2": "^3.6.5",
+    "node-fetch": "^2.7.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

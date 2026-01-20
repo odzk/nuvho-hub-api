@@ -1,17 +1,26 @@
 nuvho-hub-api/
+├── server.js                  # Main entry point
 ├── config/
-│   └── db.js
+│   ├── database.js            # Database configuration
+│   └── firebase.js            # Firebase configuration
 ├── controllers/
-│   └── authController.js
-├── middleware/
-│   └── auth.js
+│   ├── authController.js      # Authentication logic
+│   ├── onboardingController.js # Onboarding flow
+│   └── propertyController.js  # Property management
 ├── models/
-│   └── User.js
+│   ├── Property.js            # Property data model
+│   └── User.js                # User data model
+├── middleware/
+│   ├── auth.js                # Authentication middleware
+│   └── auth-mysql-test.js     # MySQL test middleware
 ├── routes/
-│   └── auth.js
+│   ├── auth.js                # Authentication routes
+│   ├── hubspot.js             # HubSpot integration
+│   ├── onboarding.js          # Onboarding routes
+│   └── properties.js          # Property routes
 ├── utils/
-│   └── helpers.js
-├── .env
-├── .gitignore
-├── package.json
-└── server.js
+│   └── helpers.js             # Utility functions
+├── .env                       # Environment variables
+├── .gitignore                 # Git ignore rules
+├── package.json               # Dependencies
+└── README.md                  # Project documentation

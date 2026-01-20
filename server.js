@@ -31,13 +31,40 @@ try {
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',  // React dev server
+    'http://localhost:3001',  // Alternative React port
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ]
+};
+
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
+
 // Middleware
-app.use(cors());
+// app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Enhanced auth routes with MySQL-first support
 app.use('/api/auth', require('./routes/auth'));
+
+// Onboarding
+app.use('/api/onboarding', require('./routes/onboarding'));
 
 // Only load HubSpot routes if the file exists
 try {
@@ -45,6 +72,15 @@ try {
   console.log('✅ HubSpot routes loaded');
 } catch (error) {
   console.log('ℹ️ HubSpot routes not available - run setup to enable HubSpot integration');
+}
+
+// AI services routes
+try {
+  app.use('/api/ai', require('./routes/ai'));
+  console.log('✅ AI services routes loaded');
+} catch (error) {
+  console.log('ℹ️ AI services routes not available - check OpenAI configuration');
+  console.log('💡 Add OPENAI_API_KEY to your .env file to enable AI features');
 }
 
 // Property routes with Firebase/MySQL compatibility
@@ -68,11 +104,15 @@ app.get('/api/health', async (req, res) => {
       database: 'Connected',
       firebase: firebaseEnabled ? 'Available' : 'Not Available',
       authSystem: firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only',
+      aiServices: process.env.OPENAI_API_KEY ? 'Available' : 'Not Configured',
       features: {
         mysqlFirst: true,
         firebaseBackup: firebaseEnabled,
         orphanedUserCleanup: true,
-        hybridAuthentication: firebaseEnabled
+        hybridAuthentication: firebaseEnabled,
+        aiChat: !!process.env.OPENAI_API_KEY,
+        voiceTranscription: !!process.env.OPENAI_API_KEY,
+        textToSpeech: !!process.env.OPENAI_API_KEY
       }
     });
   } catch (error) {
@@ -93,13 +133,15 @@ app.get('/api/test', (req, res) => {
     message: 'Nuvho HotelCRM Backend Server is running!',
     timestamp: new Date().toISOString(),
     authSystem: firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only Authentication',
-    version: '2.0.0',
+    version: '2.1.0',
     features: {
       mysqlFirstRegistration: true,
       firebaseBackup: firebaseEnabled,
       orphanedUserCleanup: true,
       dualDatabaseSupport: true,
-      hybridAuthentication: firebaseEnabled
+      hybridAuthentication: firebaseEnabled,
+      aiServices: !!process.env.OPENAI_API_KEY,
+      voiceFeatures: !!process.env.OPENAI_API_KEY
     },
     endpoints: [
       'GET /api/health',
@@ -120,6 +162,13 @@ app.get('/api/test', (req, res) => {
       'PUT /api/properties/:id',
       'PATCH /api/properties/:id/status',
       'DELETE /api/properties/:id',
+      
+      // AI Services Endpoints (new)
+      'POST /api/ai/chat (Chat with Nuvho Analyst)',
+      'POST /api/ai/transcribe (Audio to text)',
+      'POST /api/ai/speak (Text to speech)',
+      'GET /api/ai/health (AI services status)',
+      'GET /api/ai/test (AI services info)',
       
       // HubSpot Integration (if available)
       'GET /api/hubspot/status',
@@ -240,6 +289,14 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // OpenAI API errors
+  if (err.message && err.message.includes('OpenAI API Error')) {
+    return res.status(502).json({
+      message: 'AI service error',
+      error: 'Unable to process AI request'
+    });
+  }
+  
   // Default error response
   res.status(500).json({ 
     message: 'Something went wrong!',
@@ -250,7 +307,7 @@ app.use((err, req, res, next) => {
 // Initialize database and start server
 const startServer = async () => {
   try {
-    console.log('🚀 Starting Nuvho HotelCRM Server v2.0...');
+    console.log('🚀 Starting Nuvho HotelCRM Server v2.1...');
     console.log('💾 Authentication Flow: MySQL-First + Firebase Backup');
     
     // Test database connection
@@ -264,7 +321,8 @@ const startServer = async () => {
       console.log(`🎉 Server running successfully on port ${PORT}`);
       console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔗 API Base URL: http://localhost:${PORT}/api`);
-      console.log(`🔐 Auth System: ${firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only Authentication'}`);
+      console.log(`🏗 Auth System: ${firebaseEnabled ? 'MySQL-First + Firebase Backup' : 'MySQL-Only Authentication'}`);
+      console.log(`🤖 AI Services: ${process.env.OPENAI_API_KEY ? 'Enabled' : 'Disabled'}`);
       
       console.log('\n📋 Registration Flow:');
       if (firebaseEnabled) {
@@ -272,15 +330,15 @@ const startServer = async () => {
         console.log('   2. 🔥 Create Firebase authentication account');
         console.log('   3. 🔄 Update MySQL user with Firebase UID');
         console.log('   4. 🎯 Return success with JWT token');
-        console.log('   📝 Fallback: Continue with MySQL-only if Firebase fails');
+        console.log('   🏗 Fallback: Continue with MySQL-only if Firebase fails');
       } else {
         console.log('   1. ✅ Save user to MySQL database');
         console.log('   2. 🎯 Return success with JWT token');
-        console.log('   📝 Note: Firebase backup not available');
+        console.log('   🏗 Note: Firebase backup not available');
       }
       
-      console.log('\n📡 Available endpoints:');
-      console.log('   🔐 Authentication:');
+      console.log('\n🔡 Available endpoints:');
+      console.log('   🏗 Authentication:');
       console.log('     - POST /api/auth/register (MySQL-first registration)');
       console.log('     - POST /api/auth/register-firebase (Firebase-initiated users)');
       console.log('     - POST /api/auth/login');
@@ -294,6 +352,15 @@ const startServer = async () => {
       console.log('     - PUT  /api/properties/:id');
       console.log('     - PATCH /api/properties/:id/status');
       console.log('     - DELETE /api/properties/:id');
+      
+      if (process.env.OPENAI_API_KEY) {
+        console.log('   🤖 AI Services:');
+        console.log('     - POST /api/ai/chat (Chat with Nuvho Analyst)');
+        console.log('     - POST /api/ai/transcribe (Audio to text)');
+        console.log('     - POST /api/ai/speak (Text to speech)');
+        console.log('     - GET  /api/ai/health (AI services status)');
+        console.log('     - GET  /api/ai/test (AI services info)');
+      }
       
       console.log('   🔧 Utilities:');
       console.log('     - GET  /api/health');
@@ -321,6 +388,18 @@ const startServer = async () => {
         console.log('💾 Primary: MySQL database for user storage');
         console.log('🔥 Backup: Firebase authentication for auth services');
         console.log('🔄 Automatic: Orphaned user cleanup available');
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        console.log('');
+        console.log('🤖 AI SERVICES: Disabled');
+        console.log('💡 Add OPENAI_API_KEY to your .env file to enable AI features');
+        console.log('🎯 Required for: Chat, Voice Transcription, Text-to-Speech');
+      } else {
+        console.log('');
+        console.log('✅ AI SERVICES: Enabled');
+        console.log('🤖 Nuvho Analyst: Ready for hospitality insights');
+        console.log('🎤 Voice Features: Transcription and TTS available');
       }
     });
     
