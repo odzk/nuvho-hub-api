@@ -37,32 +37,49 @@ const PORT = process.env.PORT || 4000;
 const HTTPS_PORT = process.env.HTTPS_PORT || 4443;
 
 // Enhanced CORS configuration with HTTPS support
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'https://hub.thehotelcollective.com',
+  'https://hub.thehotelcollective.com:4443',
+  'https://hub.thehotelcollective.com:4000',
+];
+
 const corsOptions = {
-  origin: [
-    'http://localhost:3000',  // React dev server
-    'http://localhost:3001',  // Alternative React port
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001',
-    'https://hub.thehotelcollective.com',  // Production frontend HTTPS
-    'https://hub.thehotelcollective.com:4443',  // HTTPS API
-    'https://hub.thehotelcollective.com:4000',  // HTTPS API on port 4000
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS policy: origin ${origin} not allowed`));
+  },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
+    'Content-Type',
+    'Authorization',
     'X-Requested-With',
     'Accept',
     'Origin'
   ]
 };
 
-app.use(cors(corsOptions));
+// Explicit preflight handler must come before other middleware
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin');
+    res.header('Access-Control-Max-Age', '86400');
+  }
+  res.sendStatus(200);
+});
 
-// Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+app.use(cors(corsOptions));
 
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' }));
@@ -380,10 +397,8 @@ const startServer = async () => {
     // Initialize database schema
     await initializeDatabase();
     
-    // Check for HTTPS configuration
-    const useHTTPS = process.env.NODE_ENV === 'production' && 
-                     process.env.SSL_CERT && 
-                     process.env.SSL_KEY;
+    // Check for HTTPS configuration (use HTTPS whenever certs are provided)
+    const useHTTPS = process.env.SSL_CERT && process.env.SSL_KEY;
     
     if (useHTTPS) {
       // HTTPS Server setup
@@ -543,11 +558,9 @@ const logServerInfo = (protocol, port) => {
 };
 
 const setupGracefulShutdown = (servers) => {
-  // Graceful shutdown handling
   const gracefulShutdown = async (signal) => {
     console.log(`\n🔔 ${signal} received. Starting graceful shutdown...`);
     
-    // Close all servers
     const shutdownPromises = servers.map(server => {
       return new Promise((resolve) => {
         server.close(() => {
@@ -576,7 +589,6 @@ const setupGracefulShutdown = (servers) => {
     }, 10000);
   };
   
-  // Listen for shutdown signals
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 };
